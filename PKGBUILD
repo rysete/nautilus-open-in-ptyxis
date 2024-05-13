@@ -15,6 +15,6 @@ source=("$pkgname-latest.tar.gz::https://github.com/GustavoWidman/nautilus-open-
 sha256sums=('SKIP')
 
 package() {
-    cd "$pkgname-open-in-code"
+    cd "nautilus-open-in-ptyxis-open-in-code"
     install -Dm644 -t "$pkgdir/usr/share/nautilus-python/extensions" nautilus-open-in-code.py
 }
