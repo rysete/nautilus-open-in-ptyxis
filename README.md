@@ -25,15 +25,7 @@ sudo dnf install nautilus-python
 Install from AUR
 
 ```bash
-yay -S nautilus-open-in-code # TODO
-```
-
-(Since package is not yet on AUR, please do this)
-
-```bash
-git clone -b open-in-code https://github.com/GustavoWidman/nautilus-open-in-ptyxis.git
-cd nautilus-open-in-ptyxis
-yes | makepkg -si
+yay -S nautilus-open-in-code
 ```
 
 Restart Nautilus
