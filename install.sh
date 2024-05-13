@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-EXT_PATH=nautilus-open-in-ptyxis.py
+EXT_PATH=nautilus-open-in-code.py
 
 restart_nautilus() {
     read -p "Restart Nautilus(Files)? [Y/n]" ans

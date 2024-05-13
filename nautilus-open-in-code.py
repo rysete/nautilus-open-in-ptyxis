@@ -8,19 +8,17 @@ from gi import require_version
 require_version("Nautilus", "4.0")
 require_version("Gtk", "4.0")
 
-TERMINAL_NAME = "org.gnome.Ptyxis.Devel"
-
 import logging
 import os
 from gettext import gettext
 
 from gi.repository import GObject, Nautilus
 
-if os.environ.get("NAUTILUS_PTYXIS_DEBUG", "False") == "True":
+if os.environ.get("NAUTILUS_CODE_DEBUG", "False") == "True":
     logging.basicConfig(level=logging.DEBUG)
 
 
-class PtyxisNautilus(GObject.GObject, Nautilus.MenuProvider):
+class VSCodeNautilus(GObject.GObject, Nautilus.MenuProvider):
     def __init__(self):
         super().__init__()
         self.is_select = False
@@ -68,12 +66,12 @@ class PtyxisNautilus(GObject.GObject, Nautilus.MenuProvider):
         return menu
 
     def _create_nautilus_item(self, dir_path: str) -> Nautilus.MenuItem:
-        """Creates the 'Open In Ptyxis' menu item."""
+        """Creates the 'Open In Code' menu item."""
 
         item = Nautilus.MenuItem(
-            name="PtyxisNautilus::open_in_ptyxis",
-            label=gettext("Open in Ptyxis"),
-            tip=gettext("Open this folder/file in Ptyxis Terminal"),
+            name="VSCodeNautilus::open_in_code",
+            label=gettext("Open in Code"),
+            tip=gettext("Open this folder/file in Visual Studio Code"),
         )
         logging.debug(f"Created item with path {dir_path}")
 
@@ -82,22 +80,19 @@ class PtyxisNautilus(GObject.GObject, Nautilus.MenuProvider):
 
         return item
 
-    def is_native(self):
-        if shutil.which("ptyxis-terminal") == "/usr/bin/ptyxis-terminal":
-            return "ptyxis-terminal"
-        if shutil.which("ptyxis") == "/usr/bin/ptyxis":
-            return "ptyxis"
+    def get_path(self):
+        if shutil.which("code") == "/usr/bin/code":
+            return "/usr/bin/code"
+        if shutil.which("code-insiders") == "/usr/bin/code-insiders":
+            return "/usr/bin/code-insiders"
+
+        return None
 
     def _nautilus_run(self, menu, path):
-        """'Open with Ptyxis's menu item callback."""
-        logging.debug("Openning:", path)
-        args = None
-        if self.is_native()=="ptyxis-terminal":
-            args = ["ptyxis-terminal", "--new-window", "-d", path]
-        elif self.is_native()=="ptyxis":
-            args = ["ptyxis", "--new-window", "-d", path]
-        else:
-            args = ["/usr/bin/flatpak", "run", TERMINAL_NAME, "--new-window", "-d", path]
+        """'Open with VSCode's menu item callback."""
+        logging.debug("Opening:", path)
+
+        args = [self.get_path(), "-n", path]
 
         subprocess.Popen(args, cwd=path)
 
