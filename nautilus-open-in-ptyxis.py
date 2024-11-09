@@ -1,109 +1,155 @@
 #!/usr/bin/python3
+
 import shutil
 import subprocess
-import urllib.parse
-
-from gi import require_version
-
-require_version("Nautilus", "4.0")
-require_version("Gtk", "4.0")
-
-TERMINAL_NAME = "org.gnome.Ptyxis.Devel"
-
 import logging
 import os
-from gettext import gettext
+from typing import List, Optional
+from gettext import gettext as _
+from pathlib import Path
+from enum import Enum, auto
+from dataclasses import dataclass
 
+from gi import require_version
+require_version("Nautilus", "4.0")
+require_version("Gtk", "4.0")
 from gi.repository import GObject, Nautilus
 
-if os.environ.get("NAUTILUS_PTYXIS_DEBUG", "False") == "True":
-    logging.basicConfig(level=logging.DEBUG)
+# Configurações
+class Config:
+    TERMINAL_NAME = "org.gnome.Ptyxis.Devel"
+    DEBUG_ENV_VAR = "NAUTILUS_PTYXIS_DEBUG"
+    NATIVE_EXECUTABLES = {
+        "ptyxis-terminal": "/usr/bin/ptyxis-terminal",
+        "ptyxis": "/usr/bin/ptyxis"
+    }
 
+class TerminalType(Enum):
+    PTYXIS_TERMINAL = auto()
+    PTYXIS = auto()
+    FLATPAK = auto()
+
+@dataclass
+class TerminalCommand:
+    executable: str
+    args: List[str]
+
+class PtyxisTerminalLauncher:
+    """Gerenciador para lançamento do terminal Ptyxis"""
+    
+    def __init__(self):
+        self.terminal_type = self._detect_terminal_type()
+
+    def _detect_terminal_type(self) -> TerminalType:
+        """Detecta qual tipo de instalação do Ptyxis está disponível"""
+        for exec_name, path in Config.NATIVE_EXECUTABLES.items():
+            if shutil.which(exec_name) == path:
+                return (TerminalType.PTYXIS_TERMINAL 
+                       if exec_name == "ptyxis-terminal" 
+                       else TerminalType.PTYXIS)
+        return TerminalType.FLATPAK
+
+    def _build_command(self, path: str) -> TerminalCommand:
+        """Constrói o comando para lançar o terminal baseado no tipo detectado"""
+        if self.terminal_type == TerminalType.FLATPAK:
+            return TerminalCommand(
+                executable="/usr/bin/flatpak",
+                args=["run", Config.TERMINAL_NAME, "--new-window", "-d", path]
+            )
+        
+        executable = ("ptyxis-terminal" 
+                     if self.terminal_type == TerminalType.PTYXIS_TERMINAL 
+                     else "ptyxis")
+        return TerminalCommand(
+            executable=executable,
+            args=["--new-window", "-d", path]
+        )
+
+    def launch(self, path: str) -> None:
+        """Lança uma nova janela do terminal no diretório especificado"""
+        try:
+            cmd = self._build_command(path)
+            full_command = [cmd.executable] + cmd.args
+            
+            logging.debug("Launching terminal with command: %s", full_command)
+            subprocess.Popen(
+                full_command,
+                cwd=path,
+                start_new_session=True,
+                # Redireciona saída de erro para evitar mensagens no terminal
+                stderr=subprocess.DEVNULL
+            )
+        except subprocess.SubprocessError as e:
+            logging.error("Failed to launch terminal: %s", e)
+            raise
 
 class PtyxisNautilus(GObject.GObject, Nautilus.MenuProvider):
+    """Extensão Nautilus para integração com o Ptyxis Terminal"""
+
     def __init__(self):
         super().__init__()
         self.is_select = False
-        pass
+        self.launcher = PtyxisTerminalLauncher()
+        
+        # Configura logging se variável de debug estiver ativa
+        if os.environ.get(Config.DEBUG_ENV_VAR, "False").lower() == "true":
+            logging.basicConfig(level=logging.DEBUG)
 
-    def get_file_items(self, files: list[Nautilus.FileInfo]):
-        """Return to menu when click on any file/folder"""
-        if not self.only_one_file_info(files):
+    def get_file_items(self, files: List[Nautilus.FileInfo]) -> List[Nautilus.MenuItem]:
+        """Retorna itens de menu ao clicar em arquivos/pastas"""
+        if not self._validate_file_selection(files):
             return []
 
-        menu = []
-        fileInfo = files[0]
+        file_info = files[0]
         self.is_select = False
 
-        if fileInfo.is_directory():
+        if file_info.is_directory():
             self.is_select = True
-            dir_path = self.get_abs_path(fileInfo)
+            dir_path = self._get_path(file_info)
+            logging.debug("Selected directory: %s", dir_path)
+            return [self._create_menu_item(dir_path)]
 
-            logging.debug("Selecting a directory!!")
-            logging.debug(f"Create a menu item for entry {dir_path}")
-            menu_item = self._create_nautilus_item(dir_path)
-            menu.append(menu_item)
+        return []
 
-        return menu
-
-    def get_background_items(self, directory):
-        """Returns the menu items to display when no file/folder is selected
-        (i.e. when right-clicking the background)."""
-        # Some concurrency problem fix.
-        # when you select a directory, and right mouse, nautilus will call this
-        # once the moments you focus the menu. This code to ignore that time.
+    def get_background_items(self, directory: Nautilus.FileInfo) -> List[Nautilus.MenuItem]:
+        """Retorna itens de menu ao clicar no fundo da janela"""
+        # Evita problemas de concorrência quando um diretório está selecionado
         if self.is_select:
             self.is_select = False
             return []
 
-        menu = []
         if directory.is_directory():
-            dir_path = self.get_abs_path(directory)
+            dir_path = self._get_path(directory)
+            logging.debug("Background directory: %s", dir_path)
+            return [self._create_menu_item(dir_path)]
 
-            logging.debug("Not thing is selected. Launch from backgrounds!!")
-            logging.debug(f"Create a menu item for entry {dir_path}")
-            menu_item = self._create_nautilus_item(dir_path)
-            menu.append(menu_item)
+        return []
 
-        return menu
-
-    def _create_nautilus_item(self, dir_path: str) -> Nautilus.MenuItem:
-        """Creates the 'Open In Ptyxis' menu item."""
-
+    def _create_menu_item(self, path: str) -> Nautilus.MenuItem:
+        """Cria o item de menu 'Abrir no Ptyxis'"""
         item = Nautilus.MenuItem(
             name="PtyxisNautilus::open_in_ptyxis",
-            label=gettext("Open in Ptyxis"),
-            tip=gettext("Open this folder/file in Ptyxis Terminal"),
+            label=_("Open in Ptyxis"),
+            tip=_("Open this folder in Ptyxis Terminal"),
         )
-        logging.debug(f"Created item with path {dir_path}")
-
-        item.connect("activate", self._nautilus_run, dir_path)
-        logging.debug("Connect trigger to menu item")
-
+        
+        item.connect("activate", self._handle_menu_activate, path)
+        logging.debug("Created menu item for path: %s", path)
         return item
 
-    def is_native(self):
-        if shutil.which("ptyxis-terminal") == "/usr/bin/ptyxis-terminal":
-            return "ptyxis-terminal"
-        if shutil.which("ptyxis") == "/usr/bin/ptyxis":
-            return "ptyxis"
+    def _handle_menu_activate(self, item: Nautilus.MenuItem, path: str) -> None:
+        """Manipulador do evento de ativação do menu"""
+        try:
+            self.launcher.launch(path)
+        except Exception as e:
+            logging.error("Failed to handle menu activation: %s", e)
 
-    def _nautilus_run(self, menu, path):
-        """'Open with Ptyxis's menu item callback."""
-        logging.debug("Openning:", path)
-        args = None
-        if self.is_native()=="ptyxis-terminal":
-            args = ["ptyxis-terminal", "--new-window", "-d", path]
-        elif self.is_native()=="ptyxis":
-            args = ["ptyxis", "--new-window", "-d", path]
-        else:
-            args = ["/usr/bin/flatpak", "run", TERMINAL_NAME, "--new-window", "-d", path]
+    @staticmethod
+    def _get_path(file_info: Nautilus.FileInfo) -> str:
+        """Obtém o caminho absoluto de um FileInfo"""
+        return file_info.get_location().get_path()
 
-        subprocess.Popen(args, cwd=path)
-
-    def get_abs_path(self, fileInfo: Nautilus.FileInfo):
-        path = fileInfo.get_location().get_path()
-        return path
-
-    def only_one_file_info(self, files: list[Nautilus.FileInfo]):
+    @staticmethod
+    def _validate_file_selection(files: List[Nautilus.FileInfo]) -> bool:
+        """Valida se apenas um arquivo está selecionado"""
         return len(files) == 1
